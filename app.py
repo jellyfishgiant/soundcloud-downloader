@@ -7,7 +7,18 @@ from pathlib import Path
 app = Flask(__name__)
 
 # Get the Downloads folder path
-DOWNLOADS_FOLDER = str(Path.home() / "Downloads")
+# Try to use Downloads, fallback to temp if not permitted
+try:
+    test_path = Path.home() / "Downloads"
+    test_path.mkdir(parents=True, exist_ok=True)
+    test_file = test_path / ".test_write"
+    with open(test_file, "w") as f:
+        f.write("test")
+    os.remove(test_file)
+    DOWNLOADS_FOLDER = str(test_path)
+except Exception as e:
+    print(f"[WARN] Cannot write to Downloads folder: {e}. Using temp dir instead.")
+    DOWNLOADS_FOLDER = tempfile.gettempdir()
 
 @app.route('/')
 def home():
@@ -39,11 +50,13 @@ def download():
                 
                 print("MP3 Download Output:", mp3_result.stdout)
                 if mp3_result.returncode != 0:
+                    print(f"[ERROR] MP3 download failed: {mp3_result.stderr}")
                     return jsonify({'error': f'MP3 download failed: {mp3_result.stderr}'}), 500
                 
                 # Step 2: Find the downloaded MP3
                 mp3_files = [f for f in os.listdir(temp_dir) if f.endswith('.mp3')]
                 if not mp3_files:
+                    print("[ERROR] No MP3 file was downloaded. Files in temp_dir:", os.listdir(temp_dir))
                     return jsonify({'error': 'No MP3 file was downloaded'}), 400
                 
                 mp3_path = os.path.join(temp_dir, mp3_files[0])
@@ -61,7 +74,9 @@ def download():
                     temp_artwork_path
                 ]
                 
-                subprocess.run(extract_cmd, capture_output=True, check=True)
+                extract_result = subprocess.run(extract_cmd, capture_output=True, text=True)
+                print("Artwork Extract Output:", extract_result.stdout)
+                print("Artwork Extract Error:", extract_result.stderr)
                 
                 # If no artwork found, create black image
                 if not os.path.exists(temp_artwork_path):
@@ -98,14 +113,16 @@ def download():
                 print("FFmpeg Error:", result.stderr)
                 
                 if result.returncode != 0:
-                    return jsonify({'error': 'MP4 conversion failed'}), 500
+                    print("[ERROR] MP4 conversion failed. FFmpeg stderr:", result.stderr)
+                    return jsonify({'error': f'MP4 conversion failed: {result.stderr}'}), 500
                 
                 # Step 5: Verify and return the final MP4
                 if not os.path.exists(final_mp4_path):
-                    return jsonify({'error': 'MP4 file was not created'}), 500
+                    print(f"[ERROR] MP4 file was not created. Expected path: {final_mp4_path}")
+                    return jsonify({'error': f'MP4 file was not created. FFmpeg stderr: {result.stderr}'}), 500
                 
                 print(f"Successfully created MP4: {final_mp4_path}")
-                return jsonify({'success': 'MP4 file created successfully'})
+                return jsonify({'success': f'MP4 file created successfully: {final_mp4_path}'})
                 
             except subprocess.CalledProcessError as e:
                 print(f"Process error: {e.stderr}")
